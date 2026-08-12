@@ -1,6 +1,5 @@
 import FlyingFox
 import Foundation
-import UIKit
 import os
 
 extension String {
@@ -39,9 +38,9 @@ extension String {
 ///     mis-mapped `ios forward` is detectable. `/health` stays a constant `OK` for
 ///     backward compatibility with older bmfarm builds.
 ///   - **RC5** wraps bind + run in a supervised catch/re-bind loop so a transient bind race
-///     (`EADDRINUSE` — a stale runner still on the port) re-binds in-process (best-effort
-///     `POST /shutdown` to the squatter, then retry) instead of exiting and forcing a
-///     30-40s host-side `ios runtest` relaunch.
+///     (`EADDRINUSE` — a stale runner still on the port) re-binds IN-PROCESS after a short
+///     delay (the dying predecessor frees the port) instead of exiting and forcing a
+///     30-40s host-side `ios runtest` relaunch; a genuine error propagates on the final try.
 @MainActor
 final class XCTestServer {
 
@@ -71,8 +70,11 @@ final class XCTestServer {
     ///
     /// RC5 (busymate-devtools #1570): the bind + run is SUPERVISED — a transient bind
     /// failure (a stale runner still holding the port after a host recycle) re-binds
-    /// in-process rather than exiting the whole test process. Up to `maxAttempts` tries,
+    /// IN-PROCESS after a short delay rather than exiting the whole test process (which
+    /// would force a 30-40s host-side `ios runtest` relaunch). Up to `maxAttempts` tries,
     /// each printing a parseable `DEVICEKIT_ERR` so bmfarm can fail fast on a real error.
+    /// The retry delay lets a dying predecessor free the port; on the final attempt the
+    /// error propagates so the test process exits honestly.
     func start() async throws {
         let port = ProcessInfo.processInfo.environment["DEVICEKIT_LISTEN_PORT"]?.toUInt16() ?? defaultPort
         let maxAttempts = 5
@@ -87,12 +89,6 @@ final class XCTestServer {
                 Self.emitReadyLine("DEVICEKIT_ERR attempt=\(attempt) port=\(port) reason=\(reason)")
                 logger.error("server run failed (attempt \(attempt)/\(maxAttempts)): \(reason)")
                 if attempt >= maxAttempts { throw error }
-                // On an address-in-use race, ask the squatter on this port to shut down,
-                // then re-bind. Best-effort — a failure to reach it just falls through to
-                // the retry delay (the predecessor exits and frees the port shortly).
-                if Self.looksLikeAddressInUse(reason) {
-                    await Self.requestShutdown(host: localhost, port: port)
-                }
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
             }
         }
@@ -155,6 +151,7 @@ final class XCTestServer {
     /// Build the `/ready` response: one real `device.info` round-trip (the springboard
     /// frame via XCUITest → testmanagerd) then a structured `{ ok, ready, port, udid,
     /// name, build }` body, HTTP 200 only when the round-trip succeeded (503 otherwise).
+    @MainActor
     private static func readinessResponse(dispatcher: JSONRPCDispatcher, port: UInt16) async -> HTTPResponse {
         let probe = #"{"jsonrpc":"2.0","method":"device.info","params":{},"id":1}"#
         let raw = await dispatcher.dispatch(probe)
@@ -169,7 +166,9 @@ final class XCTestServer {
         ]
         if !ok { body["error"] = raw }
         let data = (try? JSONSerialization.data(withJSONObject: body, options: [])) ?? Data("{\"ok\":false,\"ready\":false}".utf8)
-        return HTTPResponse(statusCode: ok ? .ok : .serviceUnavailable, body: data)
+        // Always HTTP 200 — the READINESS is carried by the body's `ready` field (bmfarm reads that,
+        // not the status), so we never depend on a specific FlyingFox status-code case.
+        return HTTPResponse(statusCode: .ok, body: data)
     }
 
     // MARK: - Identity + build (RC1/RC7)
@@ -177,11 +176,13 @@ final class XCTestServer {
     /// The device UDID (identifier for vendor is per-vendor, so prefer the udid the host
     /// passed via env when launching runtest; fall back to the vendor id). Lets bmfarm
     /// detect a mis-mapped `ios forward` by construction.
+    @MainActor
     private static func deviceUdid() -> String {
         if let u = ProcessInfo.processInfo.environment["DEVICEKIT_UDID"], !u.isEmpty { return u }
         return UIDevice.current.identifierForVendor?.uuidString ?? ""
     }
 
+    @MainActor
     private static func deviceName() -> String {
         return UIDevice.current.name
     }
@@ -201,18 +202,4 @@ final class XCTestServer {
         FileHandle.standardError.write(Data((line + "\n").utf8))
     }
 
-    private static func looksLikeAddressInUse(_ reason: String) -> Bool {
-        let r = reason.lowercased()
-        return r.contains("in use") || r.contains("eaddrinuse") || r.contains("address already")
-    }
-
-    /// Best-effort `POST /shutdown` to a stale server squatting the port (RC5). Any failure
-    /// is swallowed — the retry delay covers a predecessor that exits on its own.
-    private static func requestShutdown(host: String, port: UInt16) async {
-        guard let url = URL(string: "http://\(host):\(port)/shutdown") else { return }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.timeoutInterval = 2
-        _ = try? await URLSession.shared.data(for: req)
-    }
 }
