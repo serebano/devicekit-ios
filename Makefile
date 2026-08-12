@@ -44,15 +44,21 @@ debug:
 release:
 	@$(MAKE) build CONFIGURATION=Release
 
+# VERSION (set by CI from the release tag, e.g. 0.0.24) is stamped into the runner's
+# CFBundleShortVersionString so consumers (busymate-devtools bmfarm #1570) can verify the
+# INSTALLED runner matches the pinned release — reported LIVE via /ready `build`.
+VERSION ?=
+
 # Create unsigned IPA with XCUITest runner for real iOS devices
 ipa-unsigned:
-	@echo "Building unsigned test runner for arm64 iOS devices..."
+	@echo "Building unsigned test runner for arm64 iOS devices (VERSION=$(VERSION))..."
 	xcodebuild build-for-testing \
 		-project $(PROJECT) \
 		-scheme $(SCHEME) \
 		-configuration $(CONFIGURATION) \
 		-destination 'generic/platform=iOS' \
 		-derivedDataPath $(BUILD_DIR) \
+		$(if $(strip $(VERSION)),MARKETING_VERSION=$(VERSION)) \
 		CODE_SIGN_IDENTITY="" \
 		CODE_SIGNING_REQUIRED=NO \
 		CODE_SIGNING_ALLOWED=NO | xcbeautify

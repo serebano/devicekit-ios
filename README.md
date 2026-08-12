@@ -101,7 +101,8 @@ DeviceKit runs as an XCUITest. Once installed and launched on a device or simula
 |----------|----------|-------------|
 | `GET /ws` | WebSocket | JSON-RPC 2.0 |
 | `POST /rpc` | HTTP | JSON-RPC 2.0 |
-| `GET /health` | HTTP | Health check |
+| `GET /health` | HTTP | Liveness — constant `OK` the instant the socket binds (does **not** prove control works) |
+| `GET /ready` | HTTP | Readiness — runs one real `device.info` (testmanagerd) round-trip and returns `{ ok, ready, port, udid, name, build }`; HTTP 200 only when control is actually wired |
 | `GET /mjpeg` | HTTP | MJPEG screen stream |
 | `GET /h264` | HTTP | H264 screen stream |
 

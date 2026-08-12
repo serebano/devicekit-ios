@@ -1,3 +1,10 @@
+## [0.0.24](https://github.com/serebano/devicekit-ios/releases/tag/0.0.24) (2026-08-12)
+* Feat: deterministic + honest readiness for the busymate-devtools farm (bmfarm #1570 Wave 1):
+  * RC1 — machine-visible `DEVICEKIT_READY port=<p> udid=<u> build=<v>` / `DEVICEKIT_ERR <reason>` lines on stderr, so a consumer flips ready in ~1s and fails fast on a real error instead of a blind 60s `/health` race.
+  * RC3/RC7 — new `GET /ready` that runs one real `device.info` (testmanagerd) round-trip and returns a structured `{ ok, ready, port, udid, name, build }` (identity carried so a mis-mapped forward is detectable); `/health` stays a constant `OK`.
+  * RC5 — supervised bind + run: a transient `EADDRINUSE` re-binds in-process (best-effort `POST /shutdown` to the squatter, then retry) instead of exiting and forcing a 30-40s host relaunch.
+  * Build: the release tag is stamped into the runner's `CFBundleShortVersionString` (reported LIVE via `/ready` `build`).
+
 ## [0.0.23](https://github.com/mobile-next/devicekit-ios/releases/tag/0.0.23) (2026-08-01)
 * Fix: support xcode 26.5 by adding two missing testing frameworks ([#57](https://github.com/mobile-next/devicekit-ios/pull/57))
 
