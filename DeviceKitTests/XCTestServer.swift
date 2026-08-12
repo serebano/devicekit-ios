@@ -173,18 +173,19 @@ final class XCTestServer {
 
     // MARK: - Identity + build (RC1/RC7)
 
-    /// The device UDID (identifier for vendor is per-vendor, so prefer the udid the host
-    /// passed via env when launching runtest; fall back to the vendor id). Lets bmfarm
-    /// detect a mis-mapped `ios forward` by construction.
-    @MainActor
+    /// The device UDID — the HARDWARE udid go-ios uses, which the host passes via the
+    /// `DEVICEKIT_UDID` env when launching runtest (UIDevice.identifierForVendor is a
+    /// DIFFERENT per-app UUID that would never match, so it is NOT used). Empty when the
+    /// host did not set the env → bmfarm skips the identity assertion (RC7) and trusts the
+    /// `ready` flag; when set, bmfarm rejects a mis-mapped `ios forward` by construction.
     private static func deviceUdid() -> String {
-        if let u = ProcessInfo.processInfo.environment["DEVICEKIT_UDID"], !u.isEmpty { return u }
-        return UIDevice.current.identifierForVendor?.uuidString ?? ""
+        return ProcessInfo.processInfo.environment["DEVICEKIT_UDID"] ?? ""
     }
 
-    @MainActor
+    /// A friendly device name for logs (host may pass `DEVICEKIT_NAME`; else the OS hostname).
     private static func deviceName() -> String {
-        return UIDevice.current.name
+        if let n = ProcessInfo.processInfo.environment["DEVICEKIT_NAME"], !n.isEmpty { return n }
+        return ProcessInfo.processInfo.hostName
     }
 
     /// The runner BUILD id — stamped into the app's `CFBundleShortVersionString` by the
