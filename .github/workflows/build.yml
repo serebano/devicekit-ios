@@ -43,12 +43,19 @@ jobs:
       env:
         VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
-    - name: Upload IPA artifacts
+    - name: Zip raw device Runner.app (for per-device re-sign consumers)
+      run: make app-zip
+      env:
+        VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+
+    - name: Upload IPA + Runner.app artifacts
       uses: actions/upload-artifact@v5
       if: success()
       with:
         name: devicekit-ios-ipa
-        path: build/export/*.ipa
+        path: |
+          build/export/*.ipa
+          build/export/*-Runner.app.zip
         retention-days: 4
 
   build-sim:
@@ -99,6 +106,7 @@ jobs:
       with:
         subject-path: |
           *.ipa
+          *-Runner.app.zip
           *-Sim-*.zip
 
     - name: Upload to GitHub Release
@@ -109,4 +117,5 @@ jobs:
         name: Version ${{ github.ref_name }}
         files: |
           *.ipa
+          *-Runner.app.zip
           *-Sim-*.zip

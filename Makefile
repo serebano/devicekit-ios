@@ -15,7 +15,7 @@ CODE_SIGN_IDENTITY ?= Apple Development
 # Export method for IPA (development, ad-hoc, app-store, enterprise)
 EXPORT_METHOD ?= development
 
-.PHONY: help clean build archive ipa-unsigned sim-zip-arm64 sim-zip-x86_64 sim-zip sim-install test-coverage coverage-html lint
+.PHONY: help clean build archive ipa-unsigned app-zip sim-zip-arm64 sim-zip-x86_64 sim-zip sim-install test-coverage coverage-html lint
 
 .DEFAULT_GOAL := help
 
@@ -71,6 +71,21 @@ ipa-unsigned:
 	@cd $(EXPORT_PATH) && zip -r $(SCHEME)-runner.ipa Payload
 	@rm -rf $(EXPORT_PATH)/Payload
 	@echo "Runner IPA created at: $(EXPORT_PATH)/$(SCHEME)-runner.ipa"
+
+# Zip the raw device-independent Runner.app (the SAME product ipa-unsigned packages), so a
+# consumer that re-signs the runner PER DEVICE + installs it (busymate-devtools bmfarm
+# #1570/#1592 — the pre-built, pre-signed runner) can fetch the runner ONCE and re-sign it,
+# with NO per-device xcodebuild. Device-independent (generic/platform=iOS), unsigned
+# (re-signed by the consumer), VERSION-stamped so the installed build-id is verifiable. Run
+# AFTER ipa-unsigned (reuses its build products).
+app-zip:
+	@echo "Zipping raw device Runner.app (VERSION=$(VERSION))..."
+	@APP="$(BUILD_DIR)/Build/Products/$(CONFIGURATION)-iphoneos/$(SCHEME)UITests-Runner.app"; \
+	[ -d "$$APP" ] || { echo "no Runner.app at $$APP — run ipa-unsigned first" >&2; exit 1; }; \
+	rm -f "$(EXPORT_PATH)/$(SCHEME)-Runner.app.zip"; \
+	mkdir -p "$(EXPORT_PATH)"; \
+	( cd "$(BUILD_DIR)/Build/Products/$(CONFIGURATION)-iphoneos" && zip -qr "$(CURDIR)/$(EXPORT_PATH)/$(SCHEME)-Runner.app.zip" "$(SCHEME)UITests-Runner.app" ); \
+	echo "Runner.app zip created at: $(EXPORT_PATH)/$(SCHEME)-Runner.app.zip"
 
 # Build XCUITest runner for iOS Simulator (arm64 — Apple Silicon)
 sim-zip-arm64:
