@@ -17,8 +17,9 @@ struct BroadcastConfig: Equatable {
     var maxLongEdge: Int = 1920
 
     /// Target encode frame rate. ReplayKit delivers ~60; the pacer drops frames
-    /// to hold this rate, halving CPU/bitrate/memory at 30. Owner asked 30–60.
-    var fps: Int = 30
+    /// to hold this rate, halving CPU/bitrate/memory at 30. Owner asked 30–60 —
+    /// the farm ships 60 (native H.264 hardware-encoded off the display framebuffer).
+    var fps: Int = 60
 
     /// Explicit average bitrate (bits/s). `nil` derives it from geometry × fps.
     var bitrate: Int? = nil

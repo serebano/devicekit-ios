@@ -40,15 +40,24 @@ fi
 echo "==> generating BroadcastMirror.xcodeproj"
 "$RUBY" project.rb
 
-echo "==> building + signing (hard timeout ${BUILD_TIMEOUT}s)"
-rm -rf "$OUT" "$IPA"
+# Build a device-INDEPENDENT UNSIGNED .app (Xcode-26 recipe): -scheme (NOT -target — a bare
+# target build tries to resolve a provisioning profile even with Manual signing and fails on a
+# not-yet-enabled device), CODE_SIGNING_ALLOWED=NO to skip signing entirely. The farm re-signs
+# the .app PER DEVICE with the two SPECIFIC profiles (net.busymate.mirror + .upload) at install
+# time (install-broadcast-mirror.sh), exactly like the devicekit runner (#1592) — so this build
+# is signing-agnostic + reusable across every device.
+echo "==> building UNSIGNED, device-independent (hard timeout ${BUILD_TIMEOUT}s)"
+rm -rf "$OUT" "$IPA" "$HERE/BroadcastMirror.app.zip"
 bound "$BUILD_TIMEOUT" xcodebuild \
   -project BroadcastMirror.xcodeproj \
-  -target BroadcastMirror \
+  -scheme BroadcastMirror \
   -configuration "$CONFIG" \
   -destination 'generic/platform=iOS' \
   -derivedDataPath "$OUT" \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGN_IDENTITY= \
   CODE_SIGN_STYLE=Manual \
+  PROVISIONING_PROFILE_SPECIFIER= \
   IDEDeviceManagementInhibitDeviceDiscovery=YES \
   build
 
@@ -57,10 +66,14 @@ APP="$OUT/Build/Products/$CONFIG-iphoneos/BroadcastMirror.app"
 echo "==> app: $APP"
 echo "    embedded extension:"; ls "$APP/PlugIns" 2>/dev/null || echo "    (none — check embed phase!)"
 
-echo "==> packaging .ipa"
+# The distribution asset is the raw device-independent .app.zip (fetch-broadcast-mirror.sh pulls
+# it, then re-signs per device); also package an unsigned Payload .ipa for convenience.
+echo "==> packaging BroadcastMirror.app.zip (the distribution asset) + an unsigned .ipa"
+( cd "$(dirname "$APP")" && zip -qry "$HERE/BroadcastMirror.app.zip" "$(basename "$APP")" )
 rm -rf "$OUT/Payload"; mkdir -p "$OUT/Payload"
 cp -R "$APP" "$OUT/Payload/"
 ( cd "$OUT" && zip -qr "$IPA" Payload )
+echo "==> app.zip: $HERE/BroadcastMirror.app.zip"
 echo "==> IPA: $IPA"
 echo ""
 echo "Install on a farm phone (VPN off first if the DevTools app is present):"
