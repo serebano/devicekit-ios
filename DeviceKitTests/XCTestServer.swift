@@ -103,6 +103,14 @@ final class ReadinessCache: @unchecked Sendable {
 ///     (`EADDRINUSE` — a stale runner still on the port) re-binds IN-PROCESS after a short
 ///     delay (the dying predecessor frees the port) instead of exiting and forcing a
 ///     30-40s host-side `ios runtest` relaunch; a genuine error propagates on the final try.
+///   - **#1647 FIX-4** runs the FlyingFox accept loop DETACHED (`Task.detached`, not a bare
+///     `Task {}` that would inherit this `@MainActor` class's executor). FIX-1 moved the
+///     `/ready` PROBE off the MainActor, but the socket BIND (`server.run()` → `socket.bind()`)
+///     was still on it, so it was starved whenever XCTest's session bootstrap held the main
+///     thread with a synchronous, non-suspending accessibility call — the runner then emitted
+///     NEITHER `DEVICEKIT_READY` NOR `DEVICEKIT_ERR` (a silent bind hang; LIVE on BMDEV8,
+///     iOS 17.5.1: testmanagerd authorized:true, :12004 RST). Detached, the bind runs on the
+///     global concurrent executor and completes regardless of the main thread.
 @MainActor
 final class XCTestServer {
 
@@ -212,7 +220,22 @@ final class XCTestServer {
         // the old code emitted it before `server.run()` bound, so a probe triggered by the line
         // could race the not-yet-open socket. `waitUntilListening` throws if the run task failed
         // to bind (surfaced as a `DEVICEKIT_ERR` by `start`'s supervised catch → RC5 re-bind).
-        let runTask = Task { try await server.run() }
+        //
+        // (#1647 FIX-4) `Task.detached` — NOT a bare `Task {}`. This class is `@MainActor`, so
+        // `runServer` (and a non-detached child `Task {}` it creates) inherits the MainActor
+        // executor. The FlyingFox `server.run()` performs the `socket.bind()` syscall at the START
+        // of its accept loop; on the MainActor that bind is starved whenever XCTest's test-session
+        // bootstrap holds the main thread with a SYNCHRONOUS, non-suspending accessibility call
+        // (`springboard.frame` / `device.info` — no suspension point), so the socket NEVER binds,
+        // `waitUntilListening`'s 30s-timeout continuation can't be scheduled onto the blocked
+        // MainActor either, and the runner emits NEITHER `DEVICEKIT_READY` NOR `DEVICEKIT_ERR` —
+        // it just hangs (LIVE-proven on BMDEV8, iOS 17.5.1: testmanagerd authorized:true, reboots
+        // delivered, yet :12004 returns TCP RST and both machine lines are absent). Running the
+        // accept loop DETACHED binds `:12004` on the global concurrent executor, immune to whatever
+        // the main thread is doing — the bind (and `waitUntilListening`) complete regardless. Route
+        // handlers that need XCUITest still hop to the main thread at REQUEST time; the detached
+        // readiness prober below already proves an off-MainActor `device.info` works.
+        let runTask = Task.detached { try await server.run() }
         try await server.waitUntilListening(timeout: 30)
 
         // RC1: the machine-visible ready line — now the socket is genuinely accepting. bmfarm
