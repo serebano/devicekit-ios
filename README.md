@@ -248,3 +248,16 @@ Want to contribute? PRs are appreciated. Check open issues for good first tasks.
 ## License
 
 DeviceKit iOS is released under the [Functional Source License 1.1, Apache 2.0 Future License](LICENSE).
+
+---
+
+## Broadcast Mirror (farm add-on)
+
+[`BroadcastMirror/`](BroadcastMirror/) is a first-class companion module: a
+ReplayKit **broadcast upload extension** + a lean host app that stream a farm
+phone's screen as native hardware **H.264 (Baseline, Annex-B)** over
+`127.0.0.1:12005` — far above the XCUITest-screenshot frame-rate ceiling. It has
+its own project generator, ASC-API provisioning recipe, hard-timeout-guarded
+build script, deviceless unit tests (`cd BroadcastMirror/Core && swift test`),
+and a documented `:12005` wire contract for the off-device producer. See
+[`BroadcastMirror/README.md`](BroadcastMirror/README.md).
