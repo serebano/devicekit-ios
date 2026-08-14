@@ -6,6 +6,8 @@
 
 Control any iOS device or simulator over a simple JSON-RPC API. Tap, swipe, stream video, inspect the UI, from any language, over localhost.
 
+> **This is the Busymate fork** (`serebano/devicekit-ios`, forked from [`mobile-next/devicekit-ios`](https://github.com/mobile-next/devicekit-ios)). It is the DeviceKit control engine + native H.264 broadcast mirror consumed by the [busymate-devtools](https://github.com/serebano/busymate-devtools) Android/iOS farm (`cli/bmfarm`, pinned via `DEVICEKIT_PIN`). Fork-specific work is tracked as bmfarm issue numbers in the [CHANGELOG](CHANGELOG.md). `main` = the latest shipped implementation (control server 0.0.27 + BroadcastMirror 60fps).
+
 ## Table of Contents
 
 - [Features](#features)
@@ -25,11 +27,11 @@ Control any iOS device or simulator over a simple JSON-RPC API. Tap, swipe, stre
 
 - **Interactive automation** — Tap, swipe, long-press, type text, press hardware buttons (home, lock, volume)
 - **App control** — Launch, terminate, and detect the foreground app by bundle ID
-- **Live screen visibility** — MJPEG and H264 streaming at configurable FPS, bitrate, and quality
+- **Live screen visibility** — MJPEG streaming from the runner (`GET /mjpeg`), plus native hardware **H.264 @60fps** via the [BroadcastMirror](#broadcast-mirror-farm-add-on) ReplayKit extension
 - **UI inspection** — Full accessibility tree dumps for element targeting
 - **Screenshots** — PNG or JPEG capture with configurable quality
 - **System control** — Get/set orientation, open URLs, query screen size and scale
-- **Broadcast audio/video** — ReplayKit extension with H264 video and Opus audio over TCP
+- **Broadcast video** — ReplayKit extension streams native **H.264 (Baseline, Annex-B)** over raw TCP `127.0.0.1:12005` (audio port `:12006` reserved, not yet implemented)
 - **Flexible transport** — JSON-RPC 2.0 over WebSocket or HTTP, from any language
 
 ## Requirements
@@ -46,7 +48,7 @@ Control any iOS device or simulator over a simple JSON-RPC API. Tap, swipe, stre
 
 ```bash
 # Clone the repository
-git clone https://github.com/mobile-next/devicekit-ios.git
+git clone https://github.com/serebano/devicekit-ios.git
 cd devicekit-ios
 
 # Install dependencies
@@ -64,6 +66,7 @@ make sim-zip
 | Target | Output | Description |
 |--------|--------|-------------|
 | `make ipa-unsigned` | `build/export/devicekit-ios-unsigned.ipa` | Unsigned IPA for arm64 devices |
+| `make app-zip` | `build/export/devicekit-ios-Runner.app.zip` | Raw **device-independent** Runner.app (build once, sign per-device — the farm prebuilt path, bmfarm #1592) |
 | `make sim-zip-arm64` | `build/export/devicekit-ios-Sim-arm64.zip` | Simulator runner (Apple Silicon) |
 | `make sim-zip-x86_64` | `build/export/devicekit-ios-Sim-x86_64.zip` | Simulator runner (Intel) |
 | `make sim-zip` | Both simulator zips | arm64 + x86_64 |
@@ -93,18 +96,21 @@ DeviceKit runs as an XCUITest. Once installed and launched on a device or simula
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DEVICEKIT_LISTEN_PORT` | `12004` | JSON-RPC server port |
-| `DEVICEKIT_LISTEN_HOST` | `127.0.0.1` | Bind address for the JSON-RPC server. All TCP servers (video, audio) also bind to `127.0.0.1` by default. |
+| `DEVICEKIT_LISTEN_HOST` | `127.0.0.1` | Bind address for the JSON-RPC server |
+| `DEVICEKIT_READY_TIMEOUT_MS` | `3000` | Hard timeout for the `/ready` readiness probe's single `device.info` round-trip. On timeout `/ready` degrades to `{ ready: false, reason: "device.info timed out — testmanagerd not wired yet" }` rather than hanging (bmfarm #1603) |
 
-**Endpoints:**
+**Endpoints** — all served over the single JSON-RPC HTTP/WebSocket server on `:12004`:
 
 | Endpoint | Protocol | Description |
 |----------|----------|-------------|
 | `GET /ws` | WebSocket | JSON-RPC 2.0 |
 | `POST /rpc` | HTTP | JSON-RPC 2.0 |
 | `GET /health` | HTTP | Liveness — constant `OK` the instant the socket binds (does **not** prove control works) |
-| `GET /ready` | HTTP | Readiness — runs one real `device.info` (testmanagerd) round-trip and returns `{ ok, ready, port, udid, name, build }`; HTTP 200 only when control is actually wired |
-| `GET /mjpeg` | HTTP | MJPEG screen stream |
-| `GET /h264` | HTTP | H264 screen stream |
+| `GET /ready` | HTTP | Readiness — reads a thread-safe cache filled by one real `device.info` (testmanagerd) round-trip and returns `{ ok, ready, port, udid, name, build }`; HTTP 200 only when control is actually wired (bmfarm #1603/#1647) |
+| `GET /mjpeg` | HTTP | MJPEG screen stream (see [Streaming Endpoints](#streaming-endpoints)) |
+| `POST /shutdown` | HTTP | Graceful shutdown — stops the server so a fresh runner can take the single testmanagerd slot |
+
+> Native H.264 is **not** an HTTP route on this server (the in-runner H264 HTTP path was split out upstream in 0.0.19). Hardware H.264 @60fps is served by the separate [BroadcastMirror](#broadcast-mirror-farm-add-on) ReplayKit extension over raw TCP `:12005`.
 
 ### JSON-RPC API
 
@@ -168,41 +174,7 @@ GET /mjpeg?fps=10&quality=25&scale=100
 | `quality` | 25 | 1–100 | JPEG quality (%) |
 | `scale` | 100 | 10–100 | Scale factor (%) |
 
-#### H264
-
-```
-GET /h264?fps=30&bitrate=4000000&quality=60&scale=50
-```
-
-| Parameter | Default | Range | Description |
-|-----------|---------|-------|-------------|
-| `fps` | 30 | 1–60 | Frames per second |
-| `bitrate` | 4000000 | 100000–10000000 | Target bitrate (bps) |
-| `quality` | 60 | 1–100 | Encoder quality (%) |
-| `scale` | 50 | 10–100 | Scale factor (%) |
-
-### Broadcast Extension
-
-The ReplayKit broadcast extension provides system-level screen and audio capture over raw TCP, independent of the JSON-RPC server. These are **not** HTTP endpoints — connect with `nc` or any raw TCP client.
-
-| Port  | Stream      | Format |
-|-------|-------------|--------|
-| 12005 | H264 video  | Raw NAL units |
-| 12006 | Opus audio  | Length-prefixed frames (4-byte big-endian uint32) |
-
-```bash
-ios tunnel start --userspace &
-ios forward 12005 12005 &
-
-nc localhost 12005 | ffplay \
-  -fflags nobuffer \
-  -flags low_delay \
-  -probesize 32 \
-  -analyzeduration 0 \
-  -framedrop \
-  -sync ext \
-  -f h264 -
-```
+MJPEG is the runner's own screen stream (screenshot-based, fps-capped by XCUITest). For native hardware H.264 at 60fps, use the separate [BroadcastMirror](#broadcast-mirror-farm-add-on) ReplayKit extension (`:12005`, raw TCP).
 
 ## Testing
 
@@ -223,27 +195,26 @@ make coverage-html
 
 ```
 devicekit-ios/
-  DeviceKit/                    # Host app (SwiftUI, triggers broadcast picker)
-  DeviceKitTests/               # XCUITest runner (automation server)
-    JSONRPC/                    #   JSON-RPC protocol + 15 method handlers
-    Streamer/                   #   MJPEG and H264 HTTP streaming
-    XCTest/                     #   Private API wrappers (touch synthesis, accessibility)
-    H264Stream/                 #   Screenshot-based H264 streaming
-  BroadcastUploadExtension/     # ReplayKit extension (H264 + Opus over TCP)
-  h264-codec/                   # Swift package: H264 encoder (VideoToolbox)
-  opus-codec/                   # Swift package: Opus encoder (wraps libopus)
+  DeviceKit/                    # SwiftUI host app (broadcast-picker helper)
+  DeviceKitTests/               # XCUITest runner = the automation server (:12004)
+    JSONRPC/                    #   JSON-RPC 2.0 dispatcher + method handlers (tap/swipe/text/button/orientation/url/apps/dump/screenshot)
+    Streamer/MJPEG/             #   MJPEG HTTP screen stream (GET /mjpeg)
+    XCTest/                     #   Private-API wrappers (touch synthesis, accessibility, RunnerDaemonProxy)
+  BroadcastMirror/              # ReplayKit broadcast H.264 @60fps over :12005 (farm add-on)
+    Core/                       #   SwiftPM package: pure, unit-tested logic (AnnexB / DownscalePolicy / BitratePolicy / FramePacer)
+    Host/                       #   Lean host app that opens the system broadcast picker (net.busymate.mirror)
+    Upload/                     #   RPBroadcastSampleHandler → VideoToolbox H.264 → loopback :12005 (net.busymate.mirror.upload)
 ```
+
+The `DeviceKitTests` runner is the JSON-RPC control server (the only artifact the farm installs by default). `BroadcastMirror/` is a self-contained companion module with its own project generator, ASC-API signing recipe, and build script — see [`BroadcastMirror/README.md`](BroadcastMirror/README.md).
 
 ## Dependencies
 
-- [FlyingFox](https://github.com/swhitty/FlyingFox) — Lightweight HTTP and WebSocket server
-- [libopus](https://opus-codec.org/) — Audio codec (vendored as C source in `opus-codec/`)
+- [FlyingFox](https://github.com/swhitty/FlyingFox) — Lightweight HTTP and WebSocket server (the `:12004` control server)
 
 ## Communication
 
-Questions, issues, or ideas? [Open an issue](https://github.com/mobile-next/devicekit-ios/issues) — all feedback is welcome.
-
-Want to contribute? PRs are appreciated. Check open issues for good first tasks.
+This fork's changes exist to serve the Busymate farm — fork-specific issues and coordination live in [busymate-devtools](https://github.com/serebano/busymate-devtools) (the CHANGELOG references bmfarm issue numbers). For the upstream project, [open an issue at `mobile-next/devicekit-ios`](https://github.com/mobile-next/devicekit-ios/issues).
 
 ## License
 
