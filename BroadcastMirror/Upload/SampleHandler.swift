@@ -41,7 +41,8 @@ class SampleHandler: RPBroadcastSampleHandler {
         encoder.onNAL = { [weak self] data, isKeyframe, isConfig in
             guard let self else { return }
             if isConfig { self.server.setConfig(data) }
-            self.server.broadcast(data)
+            // v0.3.1 (#1763): mark config so a slow client's bounded queue never sheds the SPS/PPS.
+            self.server.broadcast(data, isConfig: isConfig)
             self.bytesOut += data.count
             if isKeyframe { self.keyframes += 1 }
             if !isConfig { self.framesEncoded += 1 }

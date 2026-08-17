@@ -42,7 +42,7 @@ socket off-device (`iproxy 12005` → relay → `h264Sps.ts` reframer → viewer
 | Resolution      | Advertised by the SPS. Capped at `maxLongEdge` (default **1920**), aspect-preserved, even dimensions |
 | Frame rate      | `fps` (default **30**), paced down from ReplayKit's ~60 |
 | On connect      | Server sends cached SPS/PPS immediately, **then forces a fresh IDR** so a late client decodes at the next frame |
-| Multi-client    | Multiple simultaneous readers supported; a dead socket is reaped on write failure |
+| Multi-client    | Multiple simultaneous readers supported. **v0.3.1 (#1763): each client has its OWN bounded queue + writer thread, so a slow/stalled WiFi reader can never backpressure another reader — the concurrent USB (loopback) stream is never degraded.** A stalled/dead socket is dropped (send-timeout eviction / write failure) + reaped |
 | Audio           | `:12006` **reserved, not yet implemented** (see below) |
 
 A client should: read the stream, split on start codes, feed SPS/PPS + the next
