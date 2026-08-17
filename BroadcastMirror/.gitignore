@@ -3,6 +3,7 @@ BroadcastMirror.xcodeproj/
 # Build + signing artifacts.
 build/
 *.ipa
+*.app.zip
 prov.env
 # SwiftPM build dir for Core.
 Core/.build/

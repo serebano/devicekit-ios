@@ -7,17 +7,20 @@ import os
 ///
 /// Pipeline: each ReplayKit video sample → `FramePacer` (60→target fps) →
 /// `MemoryPressureGuard` (shed under pressure) → `H264Encoder` (downscale +
-/// Baseline H.264 Annex-B) → `LoopbackServer` (`:12005` fan-out). A new `:12005`
-/// client is primed with cached SPS/PPS and triggers a forced IDR so reconnecting
-/// producers/viewers sync at the next frame. Audio is a documented stub (see the
-/// `:12006` follow-up in README); video is the priority.
+/// Baseline H.264 Annex-B) → `MirrorServer` (`:12005` fan-out over USB loopback
+/// AND — as of v0.3.0, #1759 — auth-gated WiFi). A new client is primed with
+/// cached SPS/PPS and triggers a forced IDR so reconnecting producers/viewers
+/// sync at the next frame. Audio is a documented stub (see the `:12006`
+/// follow-up in README); video is the priority.
 ///
 /// Bundle id: `net.busymate.mirror.upload` (host `net.busymate.mirror`).
 class SampleHandler: RPBroadcastSampleHandler {
     private let log = Logger(subsystem: BroadcastMirror.subsystem, category: "handler")
     private let config = BroadcastConfig.load()
     private lazy var encoder = H264Encoder(config: config)
-    private lazy var server = LoopbackServer(port: config.videoPort)
+    private lazy var server = MirrorServer(port: config.videoPort,
+                                           authToken: config.authToken,
+                                           wifiEnabled: config.wifiEnabled)
     private let memGuard = MemoryPressureGuard()
     private lazy var pacer = FramePacer(fps: config.fps)
 

@@ -66,7 +66,7 @@ ext = project.new_target(:app_extension, 'BroadcastMirrorUpload', :ios, '16.0')
 upload_group = project.new_group('Upload')
 %w[
   Upload/SampleHandler.swift Upload/H264Encoder.swift Upload/PixelScaler.swift
-  Upload/LoopbackServer.swift Upload/BroadcastConfig.swift
+  Upload/MirrorServer.swift Upload/BroadcastConfig.swift
   Upload/MemoryPressureGuard.swift Upload/BroadcastMirror.swift
 ].each { |f| ext.add_file_references([upload_group.new_reference(f)]) }
 core_group = project.new_group('Core')
